@@ -1,0 +1,255 @@
+---
+title: "Effect of within-group individual differences"
+output:
+  html_document:
+    df_print: paged
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, message=FALSE, warning = FALSE, cache = TRUE)
+```
+
+```{r}
+library(data.table)
+library(tidyverse)
+library(pwr)
+
+clPalette <- c("steelblue", "indianred")
+```
+
+We examine the effect of within-group variance in true learning rates on group comparison of regression coefficients of RPE. 
+
+# Setting 
+
+### RW model
+We consider RW model
+\begin{align*}
+V_{t+1} &= V_t + \alpha \delta_t \\
+\delta_t &= r_t - V_t
+\end{align*}
+where $V_1 = 0$. 
+
+### Model for fMRI signal: in GLMs, 
+$\epsilon_t$ is Gaussian variable with mean zero, sd, $\sigma_{\epsilon} = 0.5$, 
+$\beta_{\delta} = 1$, $\beta_{r} = 0$. 
+
+### Simulation setting
+
+* 100 trials per subject
+* Reward probabilities is 0.4
+* true parameter
+  $\alpha$ were drawn from a (truncated) Gaussian 
+distributions whose mean is 0.2 for Group 1 and 0.4 for Group 2,and s.d. are v
+aried as 0.05-0.5 with the step size 0.05. 
+Sample values of less than 0 were replaced with
+0.0, and sample values larger than 1 were replaced with 1.0. 
+* fit parameter $\hat{\alpha} = 0.3$. 
+ 
+To obtain stable estimates of the effect size, we simulated $n = 5000$ hypothetical subjects for each group. 
+
+# Simulation
+
+## Define a function for calculating effect size of group difference. 
+
+```{r}
+effsize <- function(x1, x2) {
+  list(x12 = ( mean(x2) - mean(x1) ) / sqrt( (var(x1) + var(x2) )/2 ),
+       x1 = mean(x1) / sqrt((var(x1))),
+       x2 = mean(x2) / sqrt((var(x2)))
+  )
+}
+```
+
+## Run simulation
+
+```{r}
+# number of subjects for each group
+nSub <- 5000 
+
+# number of trials
+nTrial <- 100
+
+# seed for random numbers
+set.seed(1)
+
+# reward probability
+pr <- 0.4
+
+# dataframe for data
+df <- data.table()
+
+# sd of fMRI noise
+sigma_epsion <- 0.5
+
+# means of true parameter for each group
+alpha1 <- 0.2
+alpha2 <- 0.4
+
+# fit alpha (common to both groups)
+alpha.fit <- 0.3
+
+# reward sequence
+r <- c(rep(1, round(nTrial * pr)), rep(0, round(nTrial * (1-pr))))
+r <- sample(r)
+
+df_effect_size <- data.table()
+
+alpha.sigma.list <- c(seq(0.05, 0.5, by = 0.05))
+
+for (alpha.sigma in alpha.sigma.list) {
+  
+  idxGroup <- 0
+  dfstat <- data.table()
+  
+  for (alpha.truemean in c(alpha1,alpha2)) {
+    
+    idxGroup <- idxGroup + 1
+    
+    for (idxSub in 1:nSub) {
+      
+      alpha.true <- min(max(alpha.truemean + rnorm(1,0,alpha.sigma), 0), 1)
+      
+      if (idxSub %% 1000 == 1)
+        cat("idxSub:", idxSub, format(Sys.time(), "%H:%M:%OS"), "\n")
+      
+      # true model
+      delta <- numeric(nTrial) 
+      V <- numeric(nTrial)
+      
+      for (t in 1:nTrial) {
+        delta[t] <- r[t] - V[t]
+        
+        if (t < nTrial) {
+          V[t+1] <- V[t] + alpha.true * delta[t]
+        }
+      }
+      
+      # initialize value 
+      V.fit <- numeric(nTrial)
+      
+      delta.fit <- numeric(nTrial) 
+      
+      # fit model
+      for (t in 1:nTrial) {
+        
+        delta.fit[t] <- r[t] - V.fit[t]
+        
+        if (t < nTrial) {
+          V.fit[t+1] <- V.fit[t] + alpha.fit * delta.fit[t]
+        }
+      }
+      
+      # fMRI signal
+      y <- delta + rnorm(nTrial, mean = 0, sd = sigma_epsion) 
+      y <- y - mean(y) # mean-centered 
+      
+      dftmp <- data.table(group = as.factor(idxGroup),
+                          subject = as.factor(idxSub),
+                          trial = 1:nTrial,
+                          r = r,
+                          delta = delta - mean(delta),
+                          delta.fit = delta.fit - mean(delta.fit),
+                          y = y, 
+                          V = V,
+                          nV.fit = -V.fit - mean(-V.fit))
+      
+      fit.GLM1 <- glm("y ~ delta.fit", data = dftmp)
+      fit.GLM2 <- glm("y ~ r + nV.fit", data = dftmp)
+      
+      dftmp2 <- data.table(
+        group = as.factor(idxGroup),
+        subject = idxSub,
+        # RL model parameters ---- #
+        alpha.fit = alpha.fit, 
+        alpha.truemean = alpha.truemean,
+        alpha.true = alpha.true,
+        # regression ---- #
+        beta.GLM1.delta = fit.GLM1$coefficients["delta.fit"],
+        beta.GLM2.r = fit.GLM2$coefficients["r"],
+        beta.GLM2.nV = fit.GLM2$coefficients["nV.fit"]
+      )
+      dfstat <- dplyr::bind_rows(dfstat, dftmp2)
+    }
+  }
+  
+  es.GLM2.nV <- effsize(dfstat$beta.GLM2.nV[dfstat$group == 1],
+                dfstat$beta.GLM2.nV[dfstat$group == 2])
+  
+  es.GLM1.delta <- effsize(dfstat$beta.GLM1.delta[dfstat$group == 1],
+                dfstat$beta.GLM1.delta[dfstat$group == 2])
+  
+  es.alpha <- effsize(dfstat$alpha.true[dfstat$group == 1],
+                dfstat$alpha.true[dfstat$group == 2])
+  
+  sd.alpha <- mean(sd(dfstat$alpha.true[dfstat$group == 1]),
+                sd(dfstat$alpha.true[dfstat$group == 2]))
+
+  df_effect_size <- dplyr::bind_rows(
+    df_effect_size, 
+    data.frame(alpha.sigma = alpha.sigma, 
+               sd.alpha = sd.alpha,
+               es.GLM2.nV = es.GLM2.nV$x12, 
+               es.GLM1.delta = es.GLM1.delta$x12, 
+               es.alpha = es.alpha$x12))
+}
+```
+
+
+## Plot effect sizes
+
+Plot effect size of group differences as a function of effect size of learning rate
+
+```{r}
+theme_set(theme_classic(base_size = 14))
+
+g <- ggplot(df_effect_size, aes(x = es.alpha , y=es.GLM2.nV)) + 
+  geom_line(color = clPalette[[1]]) + 
+  geom_point(color = clPalette[[1]]) + 
+  geom_line(aes(y = es.GLM1.delta), color = clPalette[[2]]) + 
+  geom_point(aes(y = es.GLM1.delta), color = clPalette[[2]]) + 
+  xlab("effect size of alpha") + 
+  ylab("effect size (between-group, RPE)") +
+  theme(axis.text.x = element_text(size=15),
+        axis.text.y = element_text(size=15)) + 
+    theme(legend.position = "none") + ylim(0,2)
+print(g)
+```
+
+Plot effect size of group differences as a function of s.d. of learning rate
+
+```{r}
+g <- ggplot(df_effect_size, aes(x=alpha.sigma, y=es.GLM2.nV)) + 
+  geom_line(color = clPalette[[1]], size=1.2) + 
+  geom_point(shape = 0,size = 3, color = clPalette[[1]]) + 
+  geom_line(aes(y = es.GLM1.delta), size=1.2, color = clPalette[[2]]) + 
+  geom_point(shape = 1,size = 3, aes(y = es.GLM1.delta), color = clPalette[[2]]) + 
+  geom_line(aes(y = es.alpha), size=1.2, color = "gray40", linetype = "longdash") + 
+  geom_point(shape = 2,size = 3, aes(y = es.alpha), color = "gray40") + 
+  xlab("alpha.sigma") + 
+  ylab("effect size (between-group, RPE)") +
+  theme(axis.text.x = element_text(size=18),
+        axis.text.y = element_text(size=18)) + ylim(0,5)
+
+print(g)
+ggsave(file="./figs/within_group_variance_alpha_sigma.eps", g)
+```
+
+
+Plot effect size of group differences as a function of s.d. of learning rate
+
+```{r}
+g <- ggplot(df_effect_size, aes(x=sd.alpha, y=es.GLM2.nV)) + 
+  geom_line(color = clPalette[[1]], size=1.2) + 
+  geom_point(shape = 0,size = 3, color = clPalette[[1]]) + 
+  geom_line(aes(y = es.GLM1.delta), size=1.2, color = clPalette[[2]]) + 
+  geom_point(shape = 1,size = 3, aes(y = es.GLM1.delta), color = clPalette[[2]]) + 
+  geom_line(aes(y = es.alpha), size=1.2, color = "gray40", linetype = "longdash") + 
+  geom_point(shape = 2,size = 3, aes(y = es.alpha), color = "gray40") + 
+  xlab("s.d. of learning rate") + 
+  ylab("effect size (between-group)") +
+  theme(axis.text.x = element_text(size=18),
+        axis.text.y = element_text(size=18)) + ylim(0,5)
+
+print(g)
+ggsave(file="./figs/within_group_variance_alpha_sd.eps", g)
+```

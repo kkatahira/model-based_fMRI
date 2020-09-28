@@ -1,0 +1,293 @@
+---
+title: "Simulation of correlation of regression coefficients of RPE in RW model"
+author: "Kentaro Katahira"
+date: "2020.08.24"
+output: 
+  html_document:
+    df_print: paged
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, message=FALSE, warning = FALSE, cache = FALSE)
+```
+
+```{r}
+library(data.table)
+library(tidyverse)
+library(pwr)
+library(gridExtra)
+library(ggplot2)
+library(latex2exp)
+```
+
+
+# Setting
+
+```{r}
+# number of subjects for each group
+nSub <- 200
+
+# number of trials
+nTrial <- 100
+
+# seed for random numbers
+set.seed(1)
+
+# reward probability
+pr <- 0.4
+
+# dataframe for data
+df <- data.table()
+
+dfstat <- data.table()
+idxGroup <- 0
+
+# sd of fMRI noise
+sigma_epsion <- 0.5
+
+# fit alpha (common to all subjects)
+alpha.fit <- 0.4
+
+# reward sequence
+r <- c(rep(1, round(nTrial * pr)), rep(0, round(nTrial * (1-pr))))
+r <- sample(r)
+
+for (idxSub in 1:nSub) {
+  
+  # alpha 
+  alpha.true <- rbeta(n = 1, shape1 = 1.5, shape2 = 1.5)
+  
+  # trait to correlate
+  sigma_z <- 0.5
+  trait <- 1 - alpha.true + rnorm(n = 1, mean = 0, sd = sigma_z)
+  
+  if (idxSub %% 100 == 1)
+    cat("idxSub:", idxSub, format(Sys.time(), "%H:%M:%OS"), "\n")
+  
+  # true model
+  delta <- numeric(nTrial) 
+  V <- numeric(nTrial)
+  
+  # fit model
+  V.fit <- numeric(nTrial)
+  delta.fit <- numeric(nTrial) 
+  
+  # simulate single session
+  for (t in 1:nTrial) {
+    
+    # true model
+    delta[t] <- r[t] - V[t]
+    
+    if (t < nTrial) {
+      V[t+1] <- V[t] + alpha.true * delta[t]
+    }
+    
+    # fit model
+    delta.fit[t] <- r[t] - V.fit[t]
+    
+    if (t < nTrial) {
+      V.fit[t+1] <- V.fit[t] + alpha.fit * delta.fit[t]
+    }
+  }
+  
+  # generate fMRI signal
+  y <- delta + rnorm(nTrial, mean = 0, sd = sigma_epsion) 
+  y <- y - mean(y) # mean-centered 
+  
+  # record trials data
+  dftmp <- data.table(group = as.factor(idxGroup),
+                      subject = as.factor(idxSub),
+                      trial = 1:nTrial,
+                      r = r,
+                      delta = delta - mean(delta),
+                      delta.fit = delta.fit - mean(delta.fit),
+                      y = y, 
+                      V = V,
+                      nV.fit = -V.fit - mean(-V.fit))
+  
+  fit.GLM1 <- glm("y ~ delta.fit", data = dftmp)
+  fit.GLM2 <- glm("y ~ r + nV.fit", data = dftmp)
+  fit.GLM2p <- glm("y ~ r + delta.fit", data = dftmp)
+  
+  # record GLM results
+  dftmp2 <- data.table(group = as.factor(idxGroup),
+                       subject = idxSub,
+                       # RL model parameters ---- #
+                       alpha.fit = alpha.fit, 
+                       alpha.true = alpha.true,
+                       trait = trait, 
+                       # regression ---- #
+                       beta.GLM1.delta = fit.GLM1$coefficients["delta.fit"],
+                       beta.GLM2.r = fit.GLM2$coefficients["r"],
+                       beta.GLM2.nV = fit.GLM2$coefficients["nV.fit"], 
+                       beta.GLM2p.r = fit.GLM2p$coefficients["r"],
+                       beta.GLM2p.delta = fit.GLM2p$coefficients["delta.fit"]
+  )
+  
+  dfstat <- dplyr::bind_rows(dfstat, dftmp2)
+}
+```
+
+
+#  Plot correlations
+### trait vs alpha 
+
+```{r}
+# ggplot() + theme_set(theme_bw(base_size = 16,base_family="Arial"))
+theme_set(theme_classic(base_size=16))
+r <- cor.test(x = dfstat$trait, dfstat$alpha.true)
+
+g1 <- dfstat %>% 
+  ggplot(aes(x = trait, y = alpha.true)) +
+  geom_point(size = 2) +
+  geom_smooth(method=lm, se=FALSE, color = "steelblue") +
+   theme(legend.position = "none", aspect.ratio=1) + 
+  labs( title = sprintf("r = %.2f\n95%%CI = [%.2f, %.2f]", r$estimate, r$conf.int[1], r$conf.int[2]),
+        x = TeX('trait'),
+        y = TeX('true learning rate, $\\alpha$'),
+        tag = "A")
+
+print(g1)
+```
+
+```{r}
+cor.test(x = dfstat$trait, dfstat$alpha.true)
+```
+
+
+## trait vs. beta-values
+
+### trait vs GLM (RPE)
+
+```{r}
+r <- cor.test(x = dfstat$trait, dfstat$beta.GLM1.delta)
+
+g2 <- dfstat %>% 
+  ggplot(aes(x = trait, y = beta.GLM1.delta)) +
+  geom_point(size = 2) +
+  geom_smooth(method=lm, se=FALSE, color = "steelblue") +
+  theme(legend.position = "none", aspect.ratio=1) + 
+  labs( title = sprintf("r = %.2f\n95%%CI = [%.2f, %.2f]", r$estimate, r$conf.int[1], r$conf.int[2]),
+        x = TeX('trait'),
+        y = TeX('beta-value for RPE, $\\hat{\\beta}_\\delta$'),
+        tag = "B")
+
+print(g2)
+```
+
+```{r}
+cor.test(x = dfstat$trait, dfstat$beta.GLM1.delta)
+```
+
+### trait vs GLM (reward)
+
+```{r}
+r <- cor.test(x = dfstat$trait, dfstat$beta.GLM2.r)
+
+g3 <- dfstat %>% 
+  ggplot(aes(x = trait, y = beta.GLM2.r)) +
+  geom_point(size = 2) +
+  geom_smooth(method=lm, se=FALSE, color = "steelblue") +
+  theme(legend.position = "none", aspect.ratio=1) + 
+  labs( title = sprintf("r = %.2f\n95%%CI = [%.2f, %.2f]", r$estimate, r$conf.int[1], r$conf.int[2]),
+        x = TeX('trait'),
+        y = TeX('beta-value for reward, $\\hat{\\beta}_r$'),
+        tag = "C")
+print(g3)
+```
+
+```{r}
+cor.test(dfstat$trait, dfstat$beta.GLM2.r)
+```
+
+### trait vs GLM (nV)
+
+
+```{r}
+r <- cor.test(x = dfstat$trait, dfstat$beta.GLM2.nV)
+
+g4 <- dfstat %>% 
+  ggplot(aes(x = trait, y = beta.GLM2.nV)) +
+  geom_point(size = 2) +
+  geom_smooth(method=lm, se=FALSE, color = "steelblue") +
+  theme(legend.position = "none", aspect.ratio=1) + 
+  labs( title = sprintf("r = %.2f\n95%%CI = [%.2f, %.2f]", r$estimate, r$conf.int[1], r$conf.int[2]),
+        x = TeX('trait'),
+        y = TeX('beta-value for negative value, $\\hat{\\beta}_{NV}$'),
+        tag = "D")
+print(g4)
+```
+
+
+```{r}
+cor.test(dfstat$trait, dfstat$beta.GLM2.nV)
+```
+```{r}
+r <- cor.test(x = dfstat$alpha.true, dfstat$beta.GLM1.delta)
+
+g5 <- dfstat %>% 
+  ggplot(aes(x = alpha.true, y = beta.GLM1.delta)) +
+  geom_point(size = 2) +
+  geom_smooth(method=lm, se=FALSE) +
+   theme(legend.position = "none", aspect.ratio=1) + ggtitle(sprintf("r = %.2f, CI = [%.2f, %.2f]", r$estimate, r$conf.int[1], r$conf.int[2]))
+
+print(g5)
+```
+
+```{r, fig.height=8, fig.width=8}
+gridExtra::grid.arrange(g1, g2, g3, g4, nrow = 2)
+ 
+gg <- arrangeGrob(g1, g2, g3, g4, nrow = 2)
+ggsave(file="./figs/trait_correlation_alpha.eps", gg)
+```
+
+## True alpha vs beta-values
+
+
+### trait vs GLM (RPE)
+
+```{r}
+r <- cor.test(x = dfstat$alpha.true, dfstat$beta.GLM1.delta)
+
+g2t <- dfstat %>% 
+  ggplot(aes(x = alpha.true, y = beta.GLM1.delta)) +
+  geom_point(size = 2) +
+  geom_smooth(method=lm, se=FALSE) +
+   theme(legend.position = "none", aspect.ratio=1) + ggtitle(sprintf("r = %.2f, CI = [%.2f, %.2f]", r$estimate, r$conf.int[1], r$conf.int[2]))
+
+print(g2t)
+```
+
+
+### alpha.true vs GLM (reward)
+
+```{r}
+r <- cor.test(x = dfstat$alpha.true, dfstat$beta.GLM2.r)
+
+g3t <- dfstat %>% 
+  ggplot(aes(x = alpha.true, y = beta.GLM2.r)) +
+  geom_point(size = 2) +
+  geom_smooth(method=lm, se=FALSE) +
+   theme(legend.position = "none", aspect.ratio=1) + ggtitle(sprintf("r = %.2f, CI = [%.2f, %.2f]", r$estimate, r$conf.int[1], r$conf.int[2]))
+```
+
+
+### trait vs GLM (nV)
+
+
+```{r}
+r <- cor.test(x = dfstat$alpha.true, dfstat$beta.GLM2.nV)
+
+g4t <- dfstat %>% 
+  ggplot(aes(x = alpha.true, y = beta.GLM2.nV)) +
+  geom_point(size = 2) +
+  geom_smooth(method=lm, se=FALSE) +
+   theme(legend.position = "none", aspect.ratio=1) + ggtitle(sprintf("r = %.2f, CI = [%.2f, %.2f]", r$estimate, r$conf.int[1], r$conf.int[2]))
+```
+
+```{r, fig.height=4.5, fig.width=16}
+gridExtra::grid.arrange(g2t, g3t, g4t, nrow = 1)
+ 
+gg <- arrangeGrob(g2t, g3t, g4t, nrow = 1)
+ggsave(file="./figs/true_alpha_correlation_alpha.eps", gg)
+```

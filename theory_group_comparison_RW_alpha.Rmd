@@ -1,0 +1,560 @@
+---
+title: "Theory (analytical results) for group comparison of regression coefficients for RW model"
+author: "Kentaro Katahira"
+date: "2020.09.17"
+output: 
+  html_document:
+    df_print: paged
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, message=FALSE, warning = FALSE, cache = FALSE)
+```
+
+```{r}
+library(data.table)
+library(tidyverse)
+library(gridExtra)
+library(pwr)
+
+theme_set(theme_classic(base_size = 16))
+```
+
+# Setting
+
+### RW model
+We consider RW model
+\begin{align*}
+V_{t+1} &= V_t + \alpha \delta_t \\
+\delta_t &= r_t - V_t
+\end{align*}
+where $V_1 = 0$. 
+
+### GLMs
+
+* GLM1
+\begin{align*}
+y_t = \beta_{\delta} \delta_t + \epsilon_t
+\end{align*}
+
+* GLM2
+\begin{align*}
+y_t =  \beta_{r} r_t + \beta_{nV} (-V) + \epsilon_t
+\end{align*}
+
+* GLM2p
+\begin{align*}
+y_t = \beta_{\delta} \delta_t + \beta_{r} r_t + \epsilon_t
+\end{align*}
+$\epsilon_t$ is Gaussian variable with mean zero, sd, $\sigma_{\epsilon} = 0.5$, 
+$\beta_{\delta} = 1$, $\beta_{r} = 0$
+
+### Setting
+
+* 100 trials
+* Reward probability: $p_r = 0.4$
+* Group 1 ($N=20$, depressed): $\alpha = 0.2$
+* Group 2 ($N=20$, control): $\alpha = 0.4$
+* fit parameter $\hat{\alpha} = 0.3$. 
+
+
+```{r}
+# number of subjects for each group
+nSub <- 20
+
+# number of trials
+nTrial <- 100
+
+# reward probability
+pr <- 0.4
+
+# sd of fMRI noise
+sigma_epsilon <- 0.5
+
+# true parameter
+alpha1 <- 0.2
+alpha2 <- 0.4
+
+alpha.true.list <- c(alpha1, alpha2)
+
+# fit alpha (common to both groups)
+alpha.fit <- 0.3
+```
+
+# Calculate statistical power for difference in group mean
+
+
+Functions for analytical results. 
+## GLM1
+
+```{r}
+beta.GLM1.delta.mean <- function(nTrial, pr, alpha.fit, alpha.true, beta.delta = 1, rho.fit = 1, rho.true = 1) {
+   (2 - alpha.fit) * (alpha.true + alpha.fit)/
+  (2 * (alpha.fit + alpha.true - alpha.fit * alpha.true) ) * rho.true / rho.fit 
+}
+
+beta.GLM1.delta.var <- function(nTrial, pr, alpha.fit, alpha.true, sigma_epsilon, rho.fit = 1, rho.true = 1) {
+  sigma_epsilon^2 * (2-alpha.fit) / (2 * nTrial * pr * (1 - pr) * rho.fit^2)
+}
+```
+
+```{r}
+# group 1
+M1.GLM1 <- beta.GLM1.delta.mean(nTrial, pr, 
+                     alpha.fit = alpha.fit, 
+                     alpha.true = alpha1)
+
+V1.GLM1 <- beta.GLM1.delta.var(nTrial, pr, 
+                   alpha.fit = alpha.fit, 
+                   alpha.true = alpha1, 
+                   sigma_epsilon)
+
+# group 2
+M2.GLM1 <- beta.GLM1.delta.mean(nTrial, pr, 
+                     alpha.fit = alpha.fit, 
+                     alpha.true = alpha2)
+
+V2.GLM1 <- beta.GLM1.delta.var(nTrial, pr, 
+                   alpha.fit = alpha.fit, 
+                   alpha.true = alpha2, 
+                   sigma_epsilon)
+
+cohen_d.GLM1 <- (M1.GLM1 - M2.GLM1)/(sqrt((V1.GLM1 + V2.GLM1)/2))
+
+pwr.res.GLM1 <- pwr.t.test(n = 20, sig.level = 0.05, d = cohen_d.GLM1,  
+                type="t",alternative="two.sided")
+
+cat("Power:",pwr.res.GLM1$power,"\n", "d = ", cohen_d.GLM1, 
+    " M1 = ",M1.GLM1, " M2 = ",M2.GLM1,
+    " V1 = ",V1.GLM1, " V2 = ",V2.GLM1, "\n")
+```
+
+
+## GLM2
+
+
+```{r}
+beta.GLM2.nV.mean <- function(nTrial, pr, alpha.fit, alpha.true, beta.r = 1, beta.nV = 1, rho.fit = 1, rho.true = 1) {
+   alpha.true * (2-alpha.fit) /
+    (alpha.true + alpha.fit - alpha.true * alpha.fit) * beta.nV * rho.true / rho.fit 
+}
+
+beta.GLM2.nV.var <- function(nTrial, pr, alpha.fit, alpha.true, sigma_epsilon, beta.r = 1, beta.nV = 1, rho.fit = 1, rho.true = 1) {
+  sigma_epsilon^2 * (2 - alpha.fit) / (nTrial * alpha.fit * pr * (1 - pr) * rho.fit^2)
+}
+
+beta.GLM2.r.mean <- function(nTrial, pr, alpha.fit, alpha.true, beta.r = 1, beta.nV = 1, rho.fit = 1, rho.true = 1) {
+    beta.r * rho.true
+}
+
+beta.GLM2.r.var <- function(nTrial, pr, alpha.fit, alpha.true, sigma_epsilon, beta.r = 1, beta.nV = 1, rho.fit = 1, rho.true = 1) {
+  sigma_epsilon^2 / (nTrial * pr * (1 - pr))
+}
+```
+
+negative value (-V)
+
+```{r}
+# group 1
+M1.GLM2 <- beta.GLM2.nV.mean(nTrial, pr, 
+                     alpha.fit = alpha.fit, 
+                     alpha.true = alpha1)
+
+V1.GLM2 <- beta.GLM2.nV.var(nTrial, pr, 
+                   alpha.fit = alpha.fit, 
+                   alpha.true = alpha1, 
+                   sigma_epsilon)
+
+# group 2
+M2.GLM2 <- beta.GLM2.nV.mean(nTrial, pr, 
+                     alpha.fit = alpha.fit, 
+                     alpha.true = alpha2)
+
+V2.GLM2 <- beta.GLM2.nV.var(nTrial, pr, 
+                   alpha.fit = alpha.fit, 
+                   alpha.true = alpha2, 
+                   sigma_epsilon)
+
+cohen_d <- (M1.GLM2 - M2.GLM2)/(sqrt((V1.GLM2 + V2.GLM2)/2))
+
+pwr.res <- pwr.t.test(n = 20, sig.level = 0.05, d = cohen_d, 
+                type="t",alternative="two.sided")
+
+cat("Power:",pwr.res$power,"\n", "d = ", cohen_d, 
+    " M1 = ", M1.GLM2, " M2 = ", M2.GLM2,
+    " V1 = ", V1.GLM2, " V2 = ", V2.GLM2, "\n")
+```
+
+reward (r)
+
+```{r}
+# group 1
+M1.GLM2 <- beta.GLM2.r.mean(nTrial, pr, 
+                     alpha.fit = alpha.fit, 
+                     alpha.true = alpha1)
+
+V1.GLM2 <- beta.GLM2.r.var(nTrial, pr, 
+                   alpha.fit = alpha.fit, 
+                   alpha.true = alpha1, 
+                   sigma_epsilon)
+
+# group 2
+M2.GLM2 <- beta.GLM2.r.mean(nTrial, pr, 
+                     alpha.fit = alpha.fit, 
+                     alpha.true = alpha2)
+
+V2.GLM2 <- beta.GLM2.r.var(nTrial, pr, 
+                   alpha.fit = alpha.fit, 
+                   alpha.true = alpha2, 
+                   sigma_epsilon)
+
+cohen_d <- (M1.GLM2 - M2.GLM2)/(sqrt((V1.GLM2 + V2.GLM2)/2))
+
+pwr.res <- pwr.t.test(n = 20, sig.level = 0.05, d = cohen_d, 
+                type="t",alternative="two.sided")
+
+cat("Power:",pwr.res$power,"\n", "d = ", cohen_d, 
+    " M1 = ", M1.GLM2, " M2 = ", M2.GLM2,
+    " V1 = ", V1.GLM2, " V2 = ", V2.GLM2, "\n")
+```
+
+
+
+## GLM2p
+
+Function for analytical results. 
+
+```{r}
+beta.GLM2p.delta.mean <- function(nTrial, pr, alpha.fit, alpha.true, beta.delta = 1, rho.fit = 1, rho.true = 1) {
+   alpha.true * (2-alpha.fit) /
+    (alpha.true + alpha.fit - alpha.true * alpha.fit) * beta.delta * rho.true / rho.fit 
+}
+
+beta.GLM2p.delta.var <- function(nTrial, pr, alpha.fit, alpha.true, sigma_epsilon, beta.delta = 1, rho.fit = 1, rho.true = 1) {
+  sigma_epsilon^2 * (2 - alpha.fit) / (nTrial * alpha.fit * pr * (1 - pr) * rho.fit^2)
+}
+
+beta.GLM2p.r.mean <- function(nTrial, pr, alpha.fit, alpha.true, beta.delta = 1, beta.r = 0, rho.fit = 1, rho.true = 1) {
+    (alpha.fit - alpha.true)/(alpha.fit + alpha.true - alpha.fit * alpha.true) * beta.delta * rho.true / rho.fit + beta.r
+}
+
+beta.GLM2p.r.var <- function(nTrial, pr, alpha.fit, alpha.true, sigma_epsilon, beta.delta = 1, rho.fit = 1, rho.true = 1) {
+  2 * sigma_epsilon^2 / (nTrial * alpha.fit * pr * (1 - pr))
+}
+```
+
+
+```{r}
+# group 1
+M1.GLM2p <- beta.GLM2p.delta.mean(nTrial, pr, 
+                     alpha.fit = alpha.fit, 
+                     alpha.true = alpha1)
+
+V1.GLM2p <- beta.GLM2p.delta.var(nTrial, pr, 
+                   alpha.fit = alpha.fit, 
+                   alpha.true = alpha1, 
+                   sigma_epsilon)
+
+# group 2
+M2.GLM2p <- beta.GLM2p.delta.mean(nTrial, pr, 
+                     alpha.fit = alpha.fit, 
+                     alpha.true = alpha2)
+
+V2.GLM2p <- beta.GLM2p.delta.var(nTrial, pr, 
+                   alpha.fit = alpha.fit, 
+                   alpha.true = alpha2, 
+                   sigma_epsilon)
+
+cohen_d <- (M1.GLM2p - M2.GLM2p)/(sqrt((V1.GLM2p + V2.GLM2p)/2))
+
+pwr.res <- pwr.t.test(n = 20, sig.level = 0.05, d = cohen_d, 
+                type="t",alternative="two.sided")
+
+cat("Power:",pwr.res$power,"\n", "d = ", cohen_d, 
+    " M1 = ", M1.GLM2p, " M2 = ", M2.GLM2p,
+    " V1 = ", V1.GLM2p, " V2 = ", V2.GLM2p, "\n")
+```
+
+
+
+# Plot analytical results of mean regression coefficients
+
+
+## common ggplot setting
+
+```{r}
+gcommon <- ggplot(data.frame(alpha.fit = c(0.1, 0.9)), aes(x = alpha.fit)) +
+  scale_color_manual(values =c("indianred","steelblue")) + 
+  labs(color="True value:") +
+  geom_vline(xintercept = alpha1, colour = "gray44", linetype ="dashed") +
+  geom_vline(xintercept = alpha2, colour = "gray44", linetype ="dashed") +
+  geom_vline(xintercept = alpha.fit, colour = "gray44") +
+  theme(legend.position = "none", aspect.ratio=1) + 
+  theme(plot.title = element_text(hjust=0.5,size=18)) + 
+    labs(x = TeX('fit learning rate, $\\hat{\\alpha}$'),
+        y =TeX('expected beta value, $E\\[\\hat{\\beta}\\]$')) +
+  ylim(0, 1.8)
+```
+
+
+
+## GLM1 
+
+```{r}
+g.m.GLM1 <- gcommon + 
+  geom_hline(yintercept = 1, colour = "gray44", linetype ="dashed") +
+  mapply(
+    function(alpha.true, co) 
+      stat_function(fun=beta.GLM1.delta.mean, 
+                    args = list(nTrial = nTrial, 
+                                pr = pr, 
+                                alpha.true = alpha.true),
+                    size = 1, 
+                    aes_q(color=co)
+      ), alpha.true.list, sprintf("alpha = %.2f", alpha.true.list)
+  ) + 
+  labs( title = "GLM1 (RPE only)",
+        tag = "A")
+```
+
+
+
+## GLM2
+```{r}
+g.m.GLM2 <- gcommon + 
+  geom_hline(yintercept = 1, colour = "gray44", linetype ="dashed") +
+  mapply(
+    function(alpha.true, co) 
+      stat_function(fun=beta.GLM2.nV.mean, 
+                    args = list(nTrial = nTrial, 
+                                pr = pr, 
+                                alpha.true = alpha.true),
+                    size = 1, 
+                    aes_q(color=co)
+      ), alpha.true.list, sprintf("alpha = %.2f", alpha.true.list)
+  ) + 
+    mapply(
+    function(alpha.true, co) 
+      stat_function(fun=beta.GLM2.r.mean, 
+                    args = list(nTrial = nTrial, 
+                                pr = pr, 
+                                alpha.true = alpha.true),
+                    size = 1, linetype = "dashed", 
+                    aes_q(color=co)
+      ), alpha.true.list, sprintf("alpha = %.2f", alpha.true.list)
+  ) + 
+  labs(title = "GLM2 (reward + (-V))", tag = "B")
+```
+
+
+
+```{r, fig.height=4.5, fig.width=11}
+gridExtra::grid.arrange(g.m.GLM1, #g.m.GLM2p, 
+                        g.m.GLM2, nrow = 1)
+```
+
+
+
+# SD of regression coefficients
+
+Define functions for calculating SD
+```{r}
+# GLM1
+beta.GLM1.delta.sd <- function(nTrial, pr, alpha.fit = alpha.fit, alpha.true, 
+                               sigma_epsilon = sigma_epsilon, rho.fit = 1, rho.true = 1) {
+  sqrt(beta.GLM1.delta.var(nTrial, pr, alpha.fit, alpha.true, sigma_epsilon, rho.fit, rho.true))
+}
+
+# GLM2p
+#  r
+beta.GLM2p.r.sd <- function(nTrial, pr, alpha.fit, alpha.true, 
+                           sigma_epsilon = sigma_epsilon, beta.delta = 1, rho.fit = 1, rho.true = 1) {
+  sqrt(beta.GLM2p.r.var(nTrial, pr, alpha.fit, alpha.true, sigma_epsilon, beta.delta, rho.fit, rho.true))
+}
+#  delta
+beta.GLM2p.delta.sd <- function(nTrial, pr, alpha.fit, alpha.true, 
+                               sigma_epsilon = sigma_epsilon, beta.delta = 1, rho.fit = 1, rho.true = 1) {
+  sqrt(beta.GLM2p.delta.var(nTrial, pr, alpha.fit, alpha.true, sigma_epsilon, beta.delta, rho.fit, rho.true))
+}
+
+# GLM2
+#  r
+beta.GLM2.r.sd <- function(nTrial, pr, alpha.fit, alpha.true, 
+                           sigma_epsilon = sigma_epsilon, beta.r = 1, beta.nV = 1, rho.fit = 1, rho.true = 1) {
+  sqrt(beta.GLM2.r.var(nTrial, pr, alpha.fit, alpha.true, sigma_epsilon, beta.r, beta.nV, rho.fit, rho.true))
+}
+#  nV
+beta.GLM2.nV.sd <- function(nTrial, pr, alpha.fit, alpha.true, 
+                            sigma_epsilon = sigma_epsilon, beta.r = 1, beta.nV = 1, rho.fit = 1, rho.true = 1) {
+  sqrt(beta.GLM2.nV.var(nTrial, pr, alpha.fit, alpha.true, sigma_epsilon, beta.r, beta.nV, rho.fit, rho.true))
+}
+```
+
+
+```{r}
+gcommon <- ggplot(data.frame(alpha.fit = c(0.1, 0.9)), aes(x = alpha.fit)) + 
+  scale_color_manual(values =c("indianred","steelblue")) + 
+  labs(color="True value:") +
+  geom_vline(xintercept = alpha1, colour = "gray44", linetype ="dashed") +
+  geom_vline(xintercept = alpha2, colour = "gray44", linetype ="dashed") +
+  geom_vline(xintercept = alpha.fit, colour = "gray44") +
+  theme(legend.position = "none", aspect.ratio=1) + 
+  theme(plot.title = element_text(hjust=0.5,size=18)) + 
+    labs(x = TeX('fit learning rate, $\\hat{\\alpha}$'),
+        y = 'S.D. of beta value') +
+  ylim(0, 1.8)
+```
+
+
+## GLM1
+
+```{r}
+g.sd.GLM1 <- gcommon + 
+  mapply(
+    function(alpha.true, co) 
+      stat_function(fun=beta.GLM1.delta.sd, 
+                    args = list(nTrial = nTrial, 
+                                pr = pr, sigma_epsilon = sigma_epsilon, 
+                                alpha.true = alpha.true),
+                    size = 1, 
+                    aes_q(color=co)
+      ), alpha.true.list, sprintf("alpha = %.2f", alpha.true.list)
+  ) + ylim(0,0.6) + 
+  labs(tag = "C") 
+```
+
+
+## GLM2
+
+```{r}
+g.sd.GLM2 <- gcommon + 
+    mapply(
+    function(alpha.true, co) 
+      stat_function(fun=beta.GLM2.r.sd, 
+                    args = list(nTrial = nTrial, 
+                                pr = pr, sigma_epsilon = sigma_epsilon, 
+                                alpha.true = alpha.true),
+                    size = 1, linetype = "dashed", 
+                    aes_q(color=co)
+      ), alpha.true.list, sprintf("alpha = %.2f", alpha.true.list)
+  ) + 
+  mapply(
+    function(alpha.true, co) 
+      stat_function(fun=beta.GLM2.nV.sd, 
+                    args = list(nTrial = nTrial, 
+                                pr = pr, sigma_epsilon = sigma_epsilon, 
+                                alpha.true = alpha.true),
+                    size = 1, 
+                    aes_q(color=co)
+      ), alpha.true.list, sprintf("alpha = %.2f", alpha.true.list)
+  ) +  ylim(0,0.6) + 
+  labs(tag = "D") 
+```
+
+```{r fig.height=4.5, fig.width=7}
+gridExtra::grid.arrange(g.sd.GLM1, # g.sd.GLM2p, 
+                        g.sd.GLM2, nrow = 1)
+# 
+# gg <- arrangeGrob(g.sd.GLM1, # g.sd.GLM2p, 
+#                   g.sd.GLM2, nrow = 1)
+# ggsave(file="./figs/theory_sd_alpha.eps", gg)
+```
+
+# Effect size (single sample)
+
+Define functions for calculating effect size
+```{r}
+# GLM1
+effectsize.GLM1.delta <- function(nTrial, pr, alpha.fit, alpha.true, 
+                                  beta.delta = 1, sigma_epsilon = sigma_epsilon, rho.fit = 1, rho.true = 1) {
+  beta.GLM1.delta.mean(nTrial, pr, alpha.fit, alpha.true, beta.delta, rho.fit, rho.true)/
+    sqrt(beta.GLM1.delta.var(nTrial, pr, alpha.fit, alpha.true, sigma_epsilon, rho.fit, rho.true))
+}
+
+# GLM2p
+effectsize.GLM2p.delta <- function(nTrial, pr, alpha.fit, alpha.true, 
+                                  beta.delta = 1, beta.r = 0, sigma_epsilon = sigma_epsilon, rho.fit = 1, rho.true = 1) {
+  beta.GLM2p.delta.mean(nTrial, pr, alpha.fit, alpha.true, beta.delta, rho.fit, rho.true)/
+    sqrt(beta.GLM2p.delta.var(nTrial, pr, alpha.fit, alpha.true, sigma_epsilon, rho.fit, rho.true))
+}
+
+effectsize.GLM2p.r <- function(nTrial, pr, alpha.fit, alpha.true, 
+                                  beta.delta = 1, beta.r = 0, sigma_epsilon = sigma_epsilon, rho.fit = 1, rho.true = 1) {
+  beta.GLM2p.r.mean(nTrial, pr, alpha.fit, alpha.true, beta.delta, beta.r, rho.fit, rho.true)/
+    sqrt(beta.GLM2p.r.var(nTrial, pr, alpha.fit, alpha.true, sigma_epsilon, rho.fit, rho.true))
+}
+
+# GLM2
+effectsize.GLM2.nV <- function(nTrial, pr, alpha.fit, alpha.true, 
+                                  beta.r= 1, beta.nv = 1, sigma_epsilon = sigma_epsilon, rho.fit = 1, rho.true = 1) {
+  beta.GLM2.nV.mean(nTrial, pr, alpha.fit, alpha.true, beta.r, beta.nv, rho.fit, rho.true)/
+    sqrt(beta.GLM2.nV.var(nTrial, pr, alpha.fit, alpha.true, sigma_epsilon, beta.r, beta.nv, rho.fit, rho.true))
+}
+
+effectsize.GLM2.r <- function(nTrial, pr, alpha.fit, alpha.true, 
+                                  beta.r = 1, beta.nv = 1, sigma_epsilon = sigma_epsilon, rho.fit = 1, rho.true = 1) {
+  beta.GLM2.r.mean(nTrial, pr, alpha.fit, alpha.true, beta.r, beta.nv, rho.fit, rho.true)/
+    sqrt(beta.GLM2.r.var(nTrial, pr, alpha.fit, alpha.true, sigma_epsilon, beta.r, beta.nv, rho.fit, rho.true))
+}
+```
+
+## GLM1
+
+```{r}
+g.effect.GLM1 <- gcommon + 
+  mapply(
+    function(alpha.true, co) 
+      stat_function(fun=effectsize.GLM1.delta, 
+                    args = list(nTrial = nTrial, 
+                                pr = pr, sigma_epsilon = sigma_epsilon, 
+                                alpha.true = alpha.true),
+                    size = 1, 
+                    aes_q(color=co)
+      ), alpha.true.list, sprintf("alpha = %.2f", alpha.true.list)
+  ) + 
+  ylab("effect size (single group)") + labs(tag = "E") + ylim(0,13)  
+```
+
+## GLM2
+
+```{r}
+g.effect.GLM2 <- gcommon + 
+  mapply(
+    function(alpha.true, co) 
+      stat_function(fun=effectsize.GLM2.nV, 
+                    args = list(nTrial = nTrial, 
+                                pr = pr, 
+                                alpha.true = alpha.true,
+                                sigma_epsilon = sigma_epsilon),
+                    size = 1, 
+                    aes_q(color=co)
+      ), alpha.true.list, sprintf("alpha = %.2f", alpha.true.list)
+  ) + 
+  mapply(
+    function(alpha.true, co) 
+      stat_function(fun=effectsize.GLM2.r, 
+                    args = list(nTrial = nTrial, 
+                                pr = pr, 
+                                alpha.true = alpha.true,
+                                sigma_epsilon = sigma_epsilon),
+                    size = 1, linetype = "dashed", 
+                    aes_q(color=co)
+      ), alpha.true.list, sprintf("alpha = %.2f", alpha.true.list)
+  ) + 
+  labs(tag = "F") + ylim(0,13) + ylab("effect size (single group)")
+```
+
+```{r, fig.height=4.5, fig.width=7}
+gridExtra::grid.arrange(g.effect.GLM1, 
+                        g.effect.GLM2, nrow = 1)
+```
+
+
+```{r, fig.height=12, fig.width=7}
+gg <- arrangeGrob(g.m.GLM1, g.m.GLM2, 
+                  g.sd.GLM1, g.sd.GLM2,
+                  g.effect.GLM1, g.effect.GLM2, 
+                  nrow = 3)
+plot(gg)
+ggsave(file="./figs/theory_alpha.eps", gg)
+```

@@ -1,0 +1,486 @@
+---
+title: "Theory (analytical results) for group comparison of regression coefficients for RW model: dependence on number of trials"
+author: "Kentaro Katahira"
+date: "2020.09.18"
+output: 
+  html_document:
+    df_print: paged
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, message=FALSE, warning = FALSE, cache = FALSE)
+```
+
+```{r}
+library(data.table)
+library(tidyverse)
+library(gridExtra)
+library(pwr)
+library(ggthemes)
+```
+
+# Setting
+
+### RW model
+We consider RW model
+\begin{align*}
+V_{t+1} &= V_t + \alpha \delta_t \\
+\delta_t &= r_t - V_t
+\end{align*}
+where $V_1 = 0$. 
+
+### GLMs
+
+* GLM1
+\begin{align*}
+y_t = \beta_{\delta} \delta_t + \epsilon_t
+\end{align*}
+
+* GLM2
+\begin{align*}
+y_t =  \beta_{r} r_t + \beta_{nV} (-V) + \epsilon_t
+\end{align*}
+
+
+### Setting
+
+* various number of trials ($T = 1,...,500$)
+* Reward probability: $p_r = 0.4$
+* Group 1 ($N=20$, depressed): $\alpha_1 = 0.2$
+* Group 2 ($N=20$, control): $\alpha_2 = 0.4$
+* fit parameter $\hat{\alpha} = 0.3$. 
+
+
+```{r}
+# number of subjects for each group
+nSub <- 20
+
+# number of trials
+nTrial <- 100
+
+# reward probability
+pr <- 0.4
+
+# sd of fMRI noise
+sigma_epsilon <- 0.5
+
+# true parameter
+alpha1 <- 0.2
+alpha2 <- 0.4
+
+# fit alpha (common to both groups)
+alpha.fit <- 0.3
+
+nTrial.list <- c(1,500)
+alpha.diff.list <- c(0.05, 0.1,0.15)
+```
+
+# Calculate statistical power for difference in group mean
+
+
+## GLM1
+
+```{r}
+beta.GLM1.delta.mean <- function(nTrial, pr, alpha.fit, alpha.true, beta.delta = 1, rho.fit = 1, rho.true = 1) {
+   (2 - alpha.fit) * (alpha.true + alpha.fit)/
+  (2 * (alpha.fit + alpha.true - alpha.fit * alpha.true) ) * rho.true / rho.fit 
+}
+
+beta.GLM1.delta.var <- function(nTrial, pr, alpha.fit, alpha.true, sigma_epsilon, rho.fit = 1, rho.true = 1) {
+  sigma_epsilon^2 * (2-alpha.fit) / (2 * nTrial * pr * (1 - pr) * rho.fit^2)
+}
+```
+
+
+## GLM2
+
+Function for analytical results. 
+
+```{r}
+beta.GLM2.nV.mean <- function(nTrial, pr, alpha.fit, alpha.true, beta.r = 1, beta.nV = 1, rho.fit = 1, rho.true = 1) {
+   alpha.true * (2-alpha.fit) /
+    (alpha.true + alpha.fit - alpha.true * alpha.fit) * beta.nV * rho.true / rho.fit 
+}
+
+beta.GLM2.nV.var <- function(nTrial, pr, alpha.fit, alpha.true, sigma_epsilon, beta.r = 1, beta.nV = 1, rho.fit = 1, rho.true = 1) {
+  sigma_epsilon^2 * (2 - alpha.fit) / (nTrial * alpha.fit * pr * (1 - pr) * rho.fit^2)
+}
+
+beta.GLM2.r.mean <- function(nTrial, pr, alpha.fit, alpha.true, beta.r = 1, beta.nV = 1, rho.fit = 1, rho.true = 1) {
+    beta.r * rho.true
+}
+
+beta.GLM2.r.var <- function(nTrial, pr, alpha.fit, alpha.true, sigma_epsilon, beta.r = 1, beta.nV = 1, rho.fit = 1, rho.true = 1) {
+  sigma_epsilon^2 / (nTrial * pr * (1 - pr))
+}
+```
+
+
+# Analytical Cohen's d 
+
+## GLM1, RPE
+
+```{r}
+cohen.d.theory.GLM1 <- function(nTrial, 
+                                pr, 
+                                alpha.fit, 
+                                alpha1, 
+                                alpha2,
+                                sigma_epsilon = 0.5) {
+  # group 1
+  M1.GLM1 <- beta.GLM1.delta.mean(nTrial = nTrial, pr = pr, 
+                                  alpha.fit = alpha.fit, 
+                                  alpha.true = alpha1)
+  
+  V1.GLM1 <- beta.GLM1.delta.var(nTrial, pr, 
+                                 alpha.fit = alpha.fit, 
+                                 alpha.true = alpha1, 
+                                 sigma_epsilon = sigma_epsilon)
+  
+  # group 2
+  M2.GLM1 <- beta.GLM1.delta.mean(nTrial, pr, 
+                                  alpha.fit = alpha.fit, 
+                                  alpha.true = alpha2)
+  
+  V2.GLM1 <- beta.GLM1.delta.var(nTrial, pr, 
+                                 alpha.fit = alpha.fit, 
+                                 alpha.true = alpha2, 
+                                 sigma_epsilon = sigma_epsilon)
+  
+  # cohen_d.GLM1 
+  (M2.GLM1 - M1.GLM1)/(sqrt((V1.GLM1 + V2.GLM1)/2))
+  
+}
+```
+
+```{r}
+pwr.50 <- pwr.t.test(n = 20, sig.level = 0.05, d = NULL,  power = 0.5, 
+                           type="t",alternative="two.sided")
+pwr.50
+
+pwr.80 <- pwr.t.test(n = 20, sig.level = 0.05, d = NULL,  power = 0.8, 
+                           type="t",alternative="two.sided")
+pwr.80
+```
+
+
+## GLM2.nV.
+
+```{r}
+cohen.d.theory.GLM2.nV <- function(nTrial, 
+                                pr, 
+                                alpha.fit, 
+                                alpha1, 
+                                alpha2,
+                                sigma_epsilon = 0.5) {
+  # group 1
+  M1.GLM2.nV <- beta.GLM2.nV.mean(nTrial = nTrial, pr = pr, 
+                                  alpha.fit = alpha.fit, 
+                                  alpha.true = alpha1)
+  
+  V1.GLM2.nV <- beta.GLM2.nV.var(nTrial, pr, 
+                                 alpha.fit = alpha.fit, 
+                                 alpha.true = alpha1, 
+                                 sigma_epsilon = sigma_epsilon)
+  
+  # group 2
+  M2.GLM2.nV <- beta.GLM2.nV.mean(nTrial, pr, 
+                                  alpha.fit = alpha.fit, 
+                                  alpha.true = alpha2)
+  
+  V2.GLM2.nV <- beta.GLM2.nV.var(nTrial, pr, 
+                                 alpha.fit = alpha.fit, 
+                                 alpha.true = alpha2, 
+                                 sigma_epsilon = sigma_epsilon)
+  
+  #cohen_d.GLM2.nV
+  (M2.GLM2.nV - M1.GLM2.nV)/(sqrt((V1.GLM2.nV + V2.GLM2.nV)/2))
+}
+```
+
+## plot setting
+
+```{r}
+require(latex2exp)
+theme_set(theme_classic(base_size = 16))
+
+nTrial.list <- c(1,500)
+alpha.diff.list <- c(0.05, 0.1, 0.2)
+
+gcommon <- ggplot(data.frame(nTrial = nTrial.list), aes(x = nTrial)) +
+  geom_hline(yintercept = pwr.50$d, colour = "gray24", linetype ="dashed") +
+  geom_hline(yintercept = pwr.80$d, colour = "gray24", linetype ="dashed") +
+  labs(color=TeX('$\\alpha_2 - \\alpha_1$')) +
+  scale_colour_ptol() + 
+  xlab("Number of trials") + 
+  ylab("effect size (between-group)")  +
+  ylim(0, 3.8) + 
+  theme(plot.title = element_text(hjust=0.5,size=18)) 
+```
+
+plot result of GLM1 
+
+```{r}
+g.m.GLM1 <- gcommon + 
+  mapply(
+    function(alpha.diff, co)
+      stat_function(fun=cohen.d.theory.GLM1, 
+                    args = list(
+                      pr = pr,  
+                      alpha.fit = alpha.fit,
+                      alpha1 = alpha.fit - alpha.diff/2, 
+                      alpha2 = alpha.fit + alpha.diff/2
+                    ),
+                    size = 1.5, 
+                    aes_q(color=co)
+      ), alpha.diff.list, as.factor(alpha.diff.list)) + 
+  labs(tag = "A") + 
+  ggtitle("GLM1, RPE") 
+print(g.m.GLM1) 
+```
+
+
+
+
+plot 
+
+```{r}
+g.m.GLM2 <- gcommon + 
+  mapply(
+    function(alpha.diff, co)
+      stat_function(fun=cohen.d.theory.GLM2.nV, 
+                    args = list(# nTrial = nTrial, 
+                      pr = pr, # sigma_epsilon = sigma_epsilon, 
+                      alpha.fit = alpha.fit,
+                      alpha1 = alpha.fit - alpha.diff/2, 
+                      alpha2 = alpha.fit + alpha.diff/2
+                      #sigma_epsilon = 0.5
+                    ),
+                    size = 1.5, 
+                    aes_q(color=co)
+      ), alpha.diff.list, as.factor(alpha.diff.list)) + 
+  labs(tag = "B") + 
+  ggtitle("GLM2, -V")
+print(g.m.GLM2) 
+```
+
+
+```{r, fig.height=4.5, fig.width=12}
+gridExtra::grid.arrange(g.m.GLM1, g.m.GLM2, nrow = 1)
+ 
+gg <- arrangeGrob(g.m.GLM1, g.m.GLM2, nrow = 1)
+ggsave(file="./figs/between_group_effectsize_nTrial.eps", gg)
+```
+
+# Simulation for Cohen's d
+
+## Define function for calculating effect size (Cohen's d)
+
+```{r}
+effsize <- function(x1, x2) {
+  list(x12 = ( mean(x2) - mean(x1) ) / sqrt( (var(x1) + var(x2))/2 ),
+       x1 = mean(x1) / sqrt((var(x1))),
+       x2 = mean(x1) / sqrt((var(x1)))
+  )
+}
+```
+
+
+## Simulation setting
+
+```{r}
+# seed for random numbers
+set.seed(1)
+
+# dataframe for data
+df <- data.table() # for simulation data 
+
+df_effectsize <- data.table() # for effect size
+
+dfstat <- data.table()
+idxGroup <- 0
+
+# number of simulation
+nEpisode <- 200
+```
+
+
+## define function for each subject
+```{r}
+run_each_sub <- function(alpha.true, alpha.fit, r, sigma_epsion) {
+  
+  # initialize values 
+  nTrial <- length(r)
+  
+  # true model
+  delta <- numeric(nTrial) 
+  V <- numeric(nTrial)
+  
+  # fit model
+  V.fit <- numeric(nTrial)
+  delta.fit <- numeric(nTrial) 
+  
+  # simulate single session
+  for (t in 1:nTrial) {
+    
+    # true model
+    delta[t] <- r[t] - V[t]
+    
+    if (t < nTrial) {
+      V[t+1] <- V[t] + alpha.true * delta[t]
+    }
+    
+    # fit model
+    delta.fit[t] <- r[t] - V.fit[t]
+    
+    if (t < nTrial) {
+      V.fit[t+1] <- V.fit[t] + alpha.fit * delta.fit[t]
+    }
+  }
+  
+  # generate fMRI signal
+  y <- delta + rnorm(nTrial, mean = 0, sd = sigma_epsion) 
+  y <- y - mean(y) # mean-centered 
+  
+  # record trials data
+  dftmp <- data.table(group = as.factor(idxGroup),
+                      subject = as.factor(idxSub),
+                      trial = 1:nTrial,
+                      r = r,
+                      delta = delta - mean(delta),
+                      delta.fit = delta.fit - mean(delta.fit),
+                      y = y, 
+                      V = V,
+                      nV.fit = -V.fit - mean(-V.fit))
+  
+  fit.GLM1 <- glm("y ~ delta.fit", data = dftmp)
+  fit.GLM2 <- glm("y ~ r + nV.fit", data = dftmp)
+  fit.GLM2p <- glm("y ~ r + delta.fit", data = dftmp)
+  
+  # record GLM results
+  dftmp2 <- data.table(
+                       # RL model parameters ---- #
+                       alpha.fit = alpha.fit, 
+                       alpha.true = alpha.true,
+                       # regression ---- #
+                       beta.GLM1.delta = fit.GLM1$coefficients["delta.fit"],
+                       beta.GLM2.r = fit.GLM2$coefficients["r"],
+                       beta.GLM2.nV = fit.GLM2$coefficients["nV.fit"], 
+                       beta.GLM2p.r = fit.GLM2p$coefficients["r"],
+                       beta.GLM2p.delta = fit.GLM2p$coefficients["delta.fit"]
+  )
+  dftmp2
+}
+```
+
+## run simulation
+
+```{r}
+dfstat <- data.table()
+nTrial.list <- c(3, 10, 25, seq(50,500,by = 50))
+nEpisode <- 100
+
+# for different numbers of trial
+for (nTrial in nTrial.list) {
+  
+  # for each episode (different realizations of reward sequence)
+  for (idxep in 1:nEpisode) {
+    
+    idxGroup <- 0
+    if (idxep %% 100 == 1)
+      cat("idxep:", idxep, "nTrial:", nTrial, format(Sys.time(), "%H:%M:%OS"), "\n")
+    
+    # reward sequence
+    r <- c(rep(1, round(nTrial * pr)), rep(0, round(nTrial * (1-pr))))
+    r <- sample(r)
+    
+    dfstat <- data.table()
+    
+    for (alpha.true in c(alpha1,alpha2)) {
+      idxGroup <- idxGroup + 1
+      
+      for (idxSub in 1:nSub) {
+        # 
+        dftmp2 <- run_each_sub(alpha.true, alpha.fit, r, sigma_epsion)
+        dftmp2 <- dftmp2 %>% mutate(group = as.factor(idxGroup),
+                                    subject = idxSub
+                                    )
+        dfstat <- dplyr::bind_rows(dfstat, dftmp2)
+      }
+      
+    }
+    
+    # calculate effect sizes
+    es.GLM1.delta <- effsize(dfstat$beta.GLM1.delta[dfstat$group == 1],
+                             dfstat$beta.GLM1.delta[dfstat$group == 2])
+    
+    es.GLM2.nV <- effsize(dfstat$beta.GLM2.nV[dfstat$group == 1],
+                          dfstat$beta.GLM2.nV[dfstat$group == 2])
+    
+    # store result for each subject
+    df_effectsize <- dplyr::bind_rows(df_effectsize, 
+                                      data.frame(alpha1 = alpha1, alpha2 = alpha2, nTrial = nTrial, 
+                                                 es.GLM1.delta = es.GLM1.delta$x12, 
+                                                 es.GLM2.nV = es.GLM2.nV$x12))
+  }
+}
+```
+
+## Plot
+
+```{r}
+gcommon <- ggplot(df_effectsize, aes(x = nTrial)) +
+  scale_colour_ptol() + 
+  theme(axis.text.x = element_text(size=15),
+        axis.text.y = element_text(size=15)) + 
+  xlab("Number of trials") + 
+  ylab("effect size (between-group)")  +
+  # ylim(-1, 2.7) + 
+  theme(plot.title = element_text(hjust=0.5,size=18)) 
+```
+
+
+```{r}
+g1 <- gcommon + 
+  geom_jitter(aes(y = es.GLM1.delta), width = 2, alpha = 0.3, height = 0, color = "gray30") +
+      stat_function(fun=cohen.d.theory.GLM1, 
+                    args = list(pr = pr, 
+                                alpha.fit = alpha.fit,
+                                alpha1 = alpha1, 
+                           alpha2 = alpha2
+                           ),
+                    size = 1.5, color = "steelblue" 
+      ) + 
+    stat_summary(aes(y = es.GLM1.delta), fun.data=mean_se, geom="errorbar", 
+               size=1.0,width=0.3,size = 2.5, color = "darkorange") + 
+  stat_summary(aes(y = es.GLM1.delta), fun.y=mean, geom="point", size = 2.5, color = "darkorange") +
+  labs(tag = "A") + ggtitle("GLM1, RPE")
+print(g1)
+```
+
+```{r}
+g2 <- gcommon + 
+  geom_jitter(aes(y = es.GLM2.nV), width = 2, alpha = 0.3, height = 0, color = "gray30") +
+      stat_function(fun=cohen.d.theory.GLM2.nV,
+                    args = list(pr = pr, 
+                                alpha.fit = alpha.fit,
+                                alpha1 = alpha1,
+                           alpha2 = alpha2
+                           ),
+                    size = 1.5, color = "steelblue" 
+      ) +
+    stat_summary(aes(y = es.GLM2.nV), fun.data=mean_se, geom="errorbar", 
+               size=1.0,width=0.3,size = 2.5, color = "darkorange") + 
+  stat_summary(aes(y = es.GLM2.nV), fun.y=mean, geom="point", size = 2.5, color = "darkorange") +
+  labs(tag = "B") + ggtitle("GLM2, -V")
+print(g2)
+```
+
+```{r, fig.height=4.5, fig.width=12}
+gridExtra::grid.arrange(g1, g2, nrow = 1)
+ 
+gg <- arrangeGrob(g1, g2, nrow = 1)
+# ggsave(file="./figs/simuation_vs_theory_nTrial.eps", gg)
+ggsave(file="./figs/simuation_vs_theory_nTrial.png", gg)
+```
+

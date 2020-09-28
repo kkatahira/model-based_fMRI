@@ -1,0 +1,327 @@
+---
+title: "Simulation of group comparison of regression coefficients for RPE in RW model"
+author: "Kentaro Katahira"
+date: "2020.09.15"
+output:
+  html_document:
+    df_print: paged
+  pdf_document: default
+---
+
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, message=FALSE, warning = FALSE, cache = FALSE)
+```
+
+```{r}
+library(data.table)
+library(dplyr)
+library(pwr)
+library(gridExtra)
+library(ggplot2)
+```
+
+fit learning rate: 0.4 -> 0.3
+
+# Setting
+
+### RW model
+We consider RW model
+\begin{align*}
+V_{t+1} &= V_t + \alpha \delta_t \\
+\delta_t &= r_t - V_t
+\end{align*}
+where $V_1 = 0$. 
+
+### GLM
+
+* GLM1
+\begin{align*}
+y_t = \beta_{\delta} \delta_t + \epsilon_t
+\end{align*}
+
+* GLM2
+\begin{align*}
+y_t =  \beta_{r} r_t + \beta_{nV} (-V) + \epsilon_t
+\end{align*}
+
+* GLM2'(GLM2p)
+\begin{align*}
+y_t = \beta_{r} r_t + \beta_{\delta} \delta_t + \epsilon_t
+\end{align*}
+
+
+* Model for fMRI signal: in GLMs, 
+$\epsilon_t$ is Gaussian variable with mean zero, sd, $\sigma_{\epsilon} = 0.5$, 
+$\beta_{\delta} = 1$, $\beta_{r} = 0$. 
+
+### Simulation setting
+
+* 100 trials per subject
+* Reward probabilities is 0.4
+* true parameter
+  * Group 1 ($N=20$, depressed): $\alpha = 0.2$
+  * Group 2 ($N=20$, control): $\alpha = 0.4$
+* fit parameter $\hat{\alpha} = 0.3$. 
+
+
+## Define function for calculating effect size (Cohen's d)
+
+```{r}
+effsize <- function(x1, x2) {
+  list(x12 = ( mean(x2) - mean(x1) ) / sqrt( (var(x1) + var(x2))/2 ),
+       x1 = mean(x1) / sqrt((var(x1))),
+       x2 = mean(x2) / sqrt((var(x2)))
+  )
+}
+```
+
+
+# Run simulation
+
+```{r}
+# number of subjects for each group
+nSub <- 20
+
+# number of trials
+nTrial <- 100
+
+# seed for random numbers
+set.seed(1)
+
+# reward probability
+pr <- 0.4
+
+# dataframe for data
+df <- data.table()
+
+dfstat <- data.table()
+idxGroup <- 0
+
+# sd of fMRI noise
+sigma_epsion <- 0.5
+
+# true parameter
+alpha1 <- 0.3
+alpha2 <- 0.5
+
+# fit alpha (common to both groups)
+alpha.fit <- 0.4
+
+# reward sequence
+r <- c(rep(1, round(nTrial * pr)), rep(0, round(nTrial * (1-pr))))
+r <- sample(r)
+# all subjects experience the same reward sequence as in Li & Daw (2011) 
+
+for (alpha.true in c(alpha1,alpha2)) {
+  idxGroup <- idxGroup + 1
+  
+  for (idxSub in 1:nSub) {
+
+    if (idxSub %% 100 == 1)
+      cat("idxSub:", idxSub, format(Sys.time(), "%H:%M:%OS"), "\n")
+    
+    # true model
+    delta <- numeric(nTrial) 
+    V <- numeric(nTrial)
+    
+    # fit model
+    V.fit <- numeric(nTrial)
+    delta.fit <- numeric(nTrial) 
+    
+    # simulate single session
+    for (t in 1:nTrial) {
+      
+      # true model
+      delta[t] <- r[t] - V[t]
+      
+      if (t < nTrial) {
+        V[t+1] <- V[t] + alpha.true * delta[t]
+      }
+      
+      # fit model
+      delta.fit[t] <- r[t] - V.fit[t]
+      
+      if (t < nTrial) {
+        V.fit[t+1] <- V.fit[t] + alpha.fit * delta.fit[t]
+      }
+    }
+    
+    # generate fMRI signal
+    y <- delta + rnorm(nTrial, mean = 0, sd = sigma_epsion) 
+    y <- y - mean(y) # mean-centered 
+    
+    # record trials data
+    dftmp <- data.table(group = as.factor(idxGroup),
+                        subject = as.factor(idxSub),
+                        trial = 1:nTrial,
+                        r = r - mean(r),
+                        delta = delta - mean(delta),
+                        delta.fit = delta.fit - mean(delta.fit),
+                        y = y, 
+                        V = V,
+                        nV.fit = -V.fit - mean(-V.fit))
+    
+    fit.GLM1 <- glm("y ~ delta.fit", data = dftmp)
+    fit.GLM2 <- glm("y ~ r + nV.fit", data = dftmp)
+    fit.GLM2p <- glm("y ~ r + delta.fit", data = dftmp)
+    
+    # record GLM results
+    dftmp2 <- data.table(group = as.factor(idxGroup),
+                         subject = idxSub,
+                         # RL model parameters ---- #
+                         alpha.fit = alpha.fit, 
+                         alpha.true = alpha.true,
+                         # beta values (regression coefficients) ---- #
+                         beta.GLM1.delta = fit.GLM1$coefficients["delta.fit"],
+                         beta.GLM2.r = fit.GLM2$coefficients["r"],
+                         beta.GLM2.nV = fit.GLM2$coefficients["nV.fit"], 
+                         beta.GLM2p.r = fit.GLM2p$coefficients["r"],
+                         beta.GLM2p.delta = fit.GLM2p$coefficients["delta.fit"]
+                         )
+    
+    dfstat <- dplyr::bind_rows(dfstat, dftmp2)
+  }
+}
+```
+
+
+#  Group comparison of regression coefficients for RPE 
+
+Define function for group comparison (effect size, t-test, plotting beta values) 
+
+```{r function for plot}
+theme_set(theme_classic(base_size=15))
+
+group_comparison <- function(df,
+                      xvar = "group",
+                      yvar = "beta.GLM1.delta",
+                      title = "GLM1, RPE (r - V)",
+                      ylabstr = "beta value",
+                      tag = ""
+                      ) {
+  
+  # t-test, calc effect size ------------
+  
+  data1 <- df[df$group == 1, ..yvar][[1]]
+  data2 <- df[df$group == 2, ..yvar][[1]]
+  
+  cohen_d <- effsize(data1,data2)$x12
+  t.result <- t.test(data1, data2, paired = F, var.equal = T)
+  print(t.result)
+  
+  # plot --------------------------------
+  
+  label_d <- sprintf("d = %.2f", cohen_d)
+  label_p <- scales::pvalue(t.result$p.value,add_p = TRUE) 
+  
+  g <- ggplot(df, aes_string(x = xvar, y = yvar, fill = xvar)) + 
+    stat_summary(fun = mean, geom = "bar", size = 2, width = 0.8) + 
+    geom_jitter(width = 0.1, shape = 1, size = 2) + 
+    stat_summary(fun.data = mean_se, geom="errorbar", size=1,width=0.3) + 
+    scale_fill_manual(values =c("indianred","steelblue")) + 
+    xlab("Group") + 
+    geom_hline(yintercept = 0, colour = "gray44", linetype ="dashed") +
+    theme(axis.text.x = element_text(size=16),
+          axis.text.y = element_text(size=16)) + 
+    theme(legend.position = "none") + ylim(-1,2) +
+    annotate("text", x = 1.5, y = 1.9, label = label_d, size = 5) + 
+    annotate("text", x = 1.5, y = 1.65, label = label_p, size = 5) + 
+    scale_x_discrete(breaks = c('1', '2'),
+                     labels = c("Group 1", "Group 2")) +
+    labs( title = title,
+          x = NULL,
+          y = "beta value", tag = tag)
+  
+  return(list(g = g, cohen_d = cohen_d, t.result = t.result))
+}
+```
+
+## GLM1
+
+```{r}
+res <- group_comparison(dfstat, 
+                        yvar = "beta.GLM1.delta", 
+                        tag = "A")
+g.GLM1 <- res$g
+```
+
+```{r, fig.height=4.5, fig.width=4}
+gridExtra::grid.arrange(g.GLM1, nrow = 1)
+```
+
+
+
+## GLM2
+
+### reward
+
+```{r}
+res <- group_comparison(dfstat, yvar = "beta.GLM2.r", 
+                 title = "GLM2, reward (r)",
+                 tag = "B")
+g.GLM2.r <- res$g
+```
+
+
+### -V
+
+```{r}
+res <- group_comparison(dfstat, yvar = "beta.GLM2.nV", 
+                 title = "GLM2, negative value (-V)",
+                 tag = "")
+g.GLM2.nV <- res$g
+```
+
+
+
+```{r, fig.height=4.5, fig.width=8}
+gridExtra::grid.arrange(g.GLM2.r, g.GLM2.nV, nrow = 1)
+```
+
+
+
+## GLM2p
+
+
+### reward
+
+```{r}
+res <- group_comparison(dfstat, yvar = "beta.GLM2p.r", 
+                 title = "GLM2', reward (r)",
+                 tag = "C")
+g.GLM2p.r <- res$g
+```
+
+
+### -V
+
+```{r}
+res <- group_comparison(dfstat, yvar = "beta.GLM2p.delta", 
+                 title = "GLM2', RPE (r - V)",
+                 tag = "")
+g.GLM2p.delta <- res$g
+```
+
+
+```{r, fig.height=4.5, fig.width=8}
+gridExtra::grid.arrange(g.GLM2p.r, g.GLM2p.delta, nrow = 1)
+```
+
+```{r, fig.height=13.5, fig.width=8}
+require(grid)
+dummy.text <- textGrob("True value: \nalpha = 0.2 (Group 1)\n alpha = 0.4 (Group 2)\nFit value: \nalpha = 0.3")
+
+
+gridExtra::grid.arrange(g.GLM1, dummy.text, 
+                        g.GLM2.r, g.GLM2.nV, 
+                        g.GLM2p.r, g.GLM2p.delta, 
+                        nrow = 3)
+
+gg <- arrangeGrob(g.GLM1, dummy.text, 
+                        g.GLM2.r, g.GLM2.nV, 
+                        g.GLM2p.r, g.GLM2p.delta, 
+                        nrow = 3)
+ggsave(file="./figs/group_comparison_RW_alpha.eps", gg)
+```
+

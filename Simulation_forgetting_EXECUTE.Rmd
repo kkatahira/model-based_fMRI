@@ -1,0 +1,263 @@
+---
+title: "Simulation_forgetting_EXCUTE (N=30, Reverse = 1)"
+author: "toyama"
+date: "2020.09.15"
+output:
+  html_document:
+    theme: default
+    toc: true
+    toc_depth: 2
+---
+
+
+
+```{r}
+source("Simulation_forgetting_FUNCTION.R")
+library(scales)
+```
+
+
+# Simulation Procedure
+
+1. Data generation
+  - `func_datageneration(Model, trueparam, RHtype, N)`: Execute this!
+  - `func_qlearning (Model, param, Est, c, r, Sim, r1, r2)`
+  : Includeing in the above function with Sim = 1
+2. Parameter Fit
+  - `func_ParameterFit(Est, Model, DF)`: Execute this!
+  - `func_minimize(Model, param, Est, c, r)`: included in the above function
+  - `func_qlearning (Model, param, Est, c, r, Sim, r1, r2)`
+  : Includeing in the above function with Sim = 0 which is defined in the above function
+
+# Setting
+
+## Setting: Task
+
+```{r Setting_task}
+set.seed(1)
+nTrial = 180
+trial = seq(1,nTrial,1)
+pr <- c(0.8,0.2)
+RHtype <- 1 # Reverse Time
+```
+
+
+## Setting: True parameters
+* High-F group: $\beta = 4$, $\alpha = 0.5$, $\phi = 0.4$
+* Low-F group : $\beta = 4$, $\alpha = 0.5$, $\phi = 0.05$
+* $\mu$ (defautl value parameter) : 0.5 (The same $\mu$ is set in the func_qlearning function.)
+
+```{r Setting_trueparameters}
+mu <- 0.5
+trueparam_HighF<-c(4,0.5,0.4) # corresponds to "beta","alpha","phi" 
+trueparam_LowF<-c(4,0.5,0.05) 
+```
+
+
+# Data generation & Fitting & Regression & Effect size
+N: 30 each
+```{r}
+set.seed(1)
+N = 30
+RHtype <- 1 # num of reverse. num of blocks is RHtype + 1
+
+Model = "BLFH"
+trueparam = trueparam_HighF
+rbetter <- c(rep(1,pr[1]*nTrial/(1+RHtype)),rep(0,pr[2]*nTrial/(1+RHtype)))
+rworse <- c(rep(1,pr[2]*nTrial/(1+RHtype)),rep(0,pr[1]*nTrial/(1+RHtype)))
+func_datageneration(Model, trueparam, RHtype, N)
+DF_FH <-DF %>% tbl_df()
+
+
+
+Model = "BLFL"
+trueparam = trueparam_LowF
+rbetter <- c(rep(1,pr[1]*nTrial/(1+RHtype)),rep(0,pr[2]*nTrial/(1+RHtype)))
+rworse <- c(rep(1,pr[2]*nTrial/(1+RHtype)),rep(0,pr[1]*nTrial/(1+RHtype)))
+func_datageneration(Model, trueparam, RHtype, N)
+DF_FL <-DF %>% tbl_df()
+
+########
+# Fitting
+#######
+
+#----------------------------- Fit DF_FH by noForget model---------------------------#
+Est <- "ML"
+Data = DF_FH
+Model = "BL"
+func_ParameterFit(Est,Model,Data)
+FHnoF_param <- DF_param %>% mutate(group = "FHnoF") 
+FHnoF <- dplyr::left_join(Data, DF_fit, by=c("id","trial")) %>% mutate(group = "FHnoF")
+
+#----------------------------- Fit DF_FL by noForget model---------------------------#
+Est <- "ML"
+Data = DF_FL
+Model = "BL"
+func_ParameterFit(Est,Model,Data)
+FLnoF_param <- DF_param %>% mutate(group = "FLnoF")
+FLnoF <- dplyr::left_join(Data, DF_fit, by=c("id","trial")) %>% mutate(group = "FLnoF")
+
+#----------------------------- Fit DF_FH by Forget model---------------------------#
+Est <- "ML"
+Data = DF_FH
+Model = "BLF"
+func_ParameterFit(Est,Model,Data)
+FHF_param <- DF_param %>% mutate(group = "FHF")
+FHF <- dplyr::left_join(Data, DF_fit, by=c("id","trial")) %>% mutate(group = "FHF")
+
+#----------------------------- Fit DF_FL by Forget model---------------------------#
+Est <- "ML"
+Data = DF_FL
+Model = "BLF"
+func_ParameterFit(Est,Model,Data)
+FLF_param <- DF_param %>%  mutate(group = "FLF")
+FLF <- dplyr::left_join(Data, DF_fit, by=c("id","trial")) %>%  mutate(group = "FLF")
+
+All <- dplyr::bind_rows(FHnoF,FHF,FLnoF,FLF)
+Allparam <- dplyr::bind_rows(FHnoF_param,FHF_param,FLnoF_param,FLF_param) %>%
+  select(-starts_with("NA")) %>% 
+  tbl_df() %>% 
+  mutate(beta = as.numeric(beta),
+         alphaL = as.numeric(alphaL),
+         alphaF = as.numeric(alphaF)
+  )
+
+
+########
+# Regression
+#######
+
+
+func_Regression_Reverse(All)
+Reg_All <- temp_Reg_All
+
+
+########
+# Effect size
+#######
+
+func_cohenD(Reg_All)
+cohenD_All <-  temp_cohenD_All
+
+
+```
+
+## t test function
+
+```{r}
+ttest <- function(x1,x2,pair){
+  t <- t.test(x1,x2, paired=pair,var.equal = T)
+  tvalue <- round(t$statistic,2)
+  df <- t$parameter
+  pvalue <- round(t$p.value,4)
+  cohenD <- round(cohen.d(x1,x2, paired=pair)$estimate,4)
+  #cat(paste("t(",df,") = ",tvalue, " (p = ", pvalue, "; d = ", cohenD,")", sep=""))
+  label_d <<- sprintf("d = %.2f", cohenD)
+  #label_p <<- scales::pvalue(t$p.value, add_p = TRUE)
+  label_p <<- scales::pvalue(t$p.value, prefix = c("p < ","p = ","p > "))
+  return(list(df=df,tvalue=tvalue,pvalue=pvalue,cohenD=cohenD))
+
+}
+```
+
+
+## t test & Plot
+```{r Regression_plot}
+
+theme_set(theme_classic(base_size=14))
+
+str_Beta <- c("beta.GLM1.delta",
+              "beta.GLM2.r",
+              "beta.GLM2.nQ")
+
+str_y <- c("beta value (RPE)",
+           "beta value (r)",
+           "beta value (-V)")
+
+str_title <- c("GLM1 RPE(R-V)",
+               "GLM2 reward(r)",
+               "GLM2 value(-V)")
+
+#--------
+# (A) Fit without forgetting 
+#--------
+
+for (i in 1:3){
+  Reg_All_noF <- Reg_All %>% filter(group %in% c("FHnoF","FLnoF"))
+  y <- Reg_All %>% filter(group == "FHnoF") %>% select(str_Beta[i])
+  x <- Reg_All %>% filter(group == "FLnoF") %>% select(str_Beta[i])
+  ttest(x[[1]],y[[1]],0)
+  
+  g <- ggplot(Reg_All_noF, aes_string(x="group", y=str_Beta[i])) + 
+    stat_summary(fun=mean,geom="bar",fill=c("indianred","steelblue"),
+                 size=2, width=0.8) + 
+    geom_jitter(width = 0.1, shape = 1) + 
+    stat_summary(fun.data=mean_se, geom="errorbar", 
+                 size=1,width=0.3) +
+    xlab("")+  ylab(str_y[i]) +  ggtitle(str_title[i])+
+    scale_x_discrete(labels=c("HighF", "LowF"))+
+    scale_y_continuous(breaks=seq(-0.5,2,0.5), limits = c(-0.2,2.0))+
+    geom_hline(yintercept = 0, colour = "gray44", linetype ="dashed") +
+    annotate("text", x = 1.5, y = 1.9, label = label_d, size = 5) +
+    annotate("text", x = 1.5, y = 1.65, label = label_p, size = 5) +
+    theme(plot.title = element_text(hjust=0.5,size=16))
+  
+  if(i == 1){
+    g <- g+labs(tag = "A")
+  } else {
+    g <- g+labs(tag = " ")
+  }
+  assign(paste("A", i, sep=""), g)
+}
+
+#--------
+# (B) Fit With forgetting 
+#--------
+
+for (i in 1:3){
+  Reg_All_F <- Reg_All %>% filter(group %in% c("FHF","FLF"))
+  y <- Reg_All %>% filter(group == "FHF") %>% select(str_Beta[i])
+  x <- Reg_All %>% filter(group == "FLF") %>% select(str_Beta[i])
+  ttest(x[[1]],y[[1]],0)
+  
+  g <- ggplot(Reg_All_F, aes_string(x="group", y=str_Beta[i])) + 
+    stat_summary(fun=mean,geom="bar",fill=c("indianred","steelblue"),
+                 size=2, width=0.8) + 
+    geom_jitter(width = 0.1, shape = 1) + 
+    stat_summary(fun.data=mean_se, geom="errorbar", 
+                 size=1,width=0.3) +
+    xlab("")+  ylab(str_y[i]) +  ggtitle(str_title[i])+
+    scale_x_discrete(labels=c("HighF", "LowF"))+
+    scale_y_continuous(breaks=seq(-0.5,2,0.5), limits = c(-0.2,2.0))+
+    geom_hline(yintercept = 0, colour = "gray44", linetype ="dashed") +
+    annotate("text", x = 1.5, y = 1.9, label = label_d, size = 5) +
+    annotate("text", x = 1.5, y = 1.65, label = label_p, size = 5) +
+    theme(plot.title = element_text(hjust=0.5,size=16))
+  
+  if(i == 1){
+    g <- g+labs(tag = "B")
+  }else{
+    g <- g+labs(tag = " ")
+  }
+  assign(paste("B", i, sep=""), g)
+}
+
+g <- grid.arrange(A1,A2,A3,B1,B2,B3,nrow=2)
+
+#ggsave("Figure5.jpg", width = 10, height = 10, plot = g)
+ggsave(file="./figs/group_comparison_forgetting.eps", width = 10, height = 10, plot = g)
+```
+
+## Correlation between hypothetical neural signals and calculated RPEs.
+
+```{r Regression_correlation}
+All %>%
+  group_by(id,group) %>% 
+  summarise(cor = cor(y,RPE_fit)) %>% 
+  tbl_df() %>% 
+  group_by(group) %>% 
+  summarise(M_cor = mean(cor),
+            SD_cor = sd(cor))
+```
+
+

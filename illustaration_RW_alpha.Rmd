@@ -1,0 +1,245 @@
+---
+title: "Illustration of RW model and its RPE--varying learning rate"
+output:
+  html_document:
+    df_print: paged
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, message=FALSE, warning = FALSE, cache = FALSE)
+```
+
+```{r}
+library(data.table)
+library(tidyverse)
+library(ggplot2)
+
+theme_set(theme_bw(base_size=12))
+clPalette <- c('#999999','#E69F00', '#56B4E9', "#F0E442", "#0072B2", "#D55E00", "#CC79A7")
+```
+
+# Setting for simulation
+
+### RW model
+We consider RW model
+\begin{align*}
+V_{t+1} &= V_t + \alpha \delta_t \\
+\delta_t &= r_t - V_t
+\end{align*}
+where $V_1 = 0$. 
+
+### fMRI signal model
+
+* Model 1 (value)
+\begin{align*}
+y_t = \beta_{V} V_t + \epsilon_t
+\end{align*}
+
+* Model 2 (RPE)
+\begin{align*}
+y_t = \beta_{\delta} \delta_t + \epsilon_t
+\end{align*}
+
+$\epsilon_t$ is Gaussian variable with mean zero, sd, $\sigma_{\epsilon} = 0.5$, 
+$\beta_{\delta} = 1$, $\beta_{V} = 1$
+
+### Setting
+
+* 100 trials
+* Reward probability: $p_r = 0.4$
+* true parameters: $\alpha = 0.5$, $\rho = 1.0$
+* fit parameters: $\hat{\alpha} = 0.2, 0.5, 0.8$ for Group 1,2,3. 
+$\hat{\rho} = 1.0$ for all groups 
+
+# Run simulation
+
+```{r}
+# number of trials
+nTrial <- 100
+
+# seed for random numbers
+set.seed(1)
+
+# reward probability
+pr <- 0.4
+
+# dataframe for data
+df <- data.table()
+
+dfstat <- data.table()
+idxGroup <- 0
+
+# sd of fMRI noise
+sigma_epsion <- 0.1
+
+# true alpha (common to both groups)
+rho.true <- 1.0
+
+# true alpha (common to both groups)
+alpha.true <- 0.5
+
+# fit parmaeters for each group
+fit.rho.array <- c(1, 1, 1) # reward sensitivity for group 1, group 2, group 3
+fit.alpha.array <- c(0.2, alpha.true, 0.8) # learning rate for group 1, group 2, group 3
+
+# reward sequence
+r <- c(rep(1, round(nTrial * pr)), rep(0, round(nTrial * (1-pr))))
+r <- sample(r)
+
+dfseq <- data.table()
+
+# true model
+delta <- numeric(nTrial) 
+V <- numeric(nTrial)
+
+for (t in 1:nTrial) {
+  delta[t] <- rho.true * r[t] - V[t]
+  
+  if (t < nTrial) {
+    V[t+1] <- V[t] + alpha.true * delta[t]
+  }
+}
+
+# generate fMRI signal
+y.delta<- delta + rnorm(nTrial, mean = 0, sd = sigma_epsion) 
+y.delta<- y.delta - mean(y.delta) # mean-centered 
+
+y.V <- V + rnorm(nTrial, mean = 0, sd = sigma_epsion) 
+y.V <- y.V - mean(y.V) # mean-centered 
+
+for (idxGroup in seq_along(fit.rho.array)) {
+  
+  rho.fit <- fit.rho.array[[idxGroup]]
+  alpha.fit <- fit.alpha.array[[idxGroup]]
+  
+  # initialize value 
+  V.fit <- numeric(nTrial)
+  
+  delta.fit <- numeric(nTrial) 
+  
+  # fit model
+  for (t in 1:nTrial) {
+    
+    delta.fit[t] <- rho.fit * r[t] - V.fit[t]
+    
+    if (t < nTrial) {
+      V.fit[t+1] <- V.fit[t] + alpha.fit * delta.fit[t]
+    }
+  }
+  
+  dftmp <- data.table(group = as.factor(idxGroup)
+                      ,trial = 1:nTrial
+                      ,r = r
+                      ,delta = delta - mean(delta)
+                      ,delta.fit = delta.fit - mean(delta.fit)
+                      ,y.delta= y.delta
+                      ,y.V = y.V
+                      ,V = V
+                      ,V.fit = V.fit)
+  
+  
+  glm.delta <- glm("y.delta~ delta.fit", data = dftmp)
+  
+  glm.V <- glm("y.V ~ V.fit", data = dftmp)
+  
+  dfseq <- rbind(dfseq, dftmp)
+  
+  dftmp2 <- data.table(group = as.factor(idxGroup),
+                       # RL model parameters ---- 
+                       alpha.fit = alpha.fit, 
+                       alpha.true = alpha.true,
+                       rho.fit = rho.fit,
+                       alpha.true = alpha.true,
+                       # latent variable statistics ---- 
+                       cor.delta.fit.y = cor(delta.fit, y.delta),
+                       cov.delta.fit.y = cov(delta.fit, y.delta),
+                       cov.V.fit.y = cov(V.fit, y.V),
+                       cor.V.fit.y = cor(V.fit, y.V),
+                       var.delta.fit = var(delta.fit), 
+                       var.V.fit = var(V.fit),
+                       # regression ---- 
+                       beta.delta = glm.delta$coefficients["delta.fit"],
+                       beta.V = glm.V$coefficients["V.fit"]
+  )
+  dfstat <- dplyr::bind_rows(dfstat, dftmp2)
+}
+```
+
+# Plot results
+
+```{r}
+theme_set(theme_classic(base_size = 14))
+```
+
+## Temporal sequence
+
+```{r}
+gV <- ggplot(dfseq, aes(x = trial, group = group, color = group)) + 
+  geom_point(aes(y = r), color = "black") +
+  geom_line(aes(y = V.fit, size = group)) +
+  geom_point(aes(y = V.fit, size = group, shape=group),size = 1.5) +
+  scale_size_manual(values = c(1.2,1.1,1.0)) + 
+  scale_color_manual(values = clPalette) +
+  xlim(0,40) + 
+  xlab("Trial number") + ylab("Value, Reward")
+
+gRPE <- ggplot(dfseq, aes(x = trial, group = group, color = group)) +
+  geom_line(aes(y = delta.fit, size = group)) +
+  geom_point(aes(y = delta.fit, size = group, shape=group),size = 1.5) +
+  scale_size_manual(values = c(1.2,1.1,1.0)) + 
+  scale_color_manual(values = clPalette) +
+  xlim(0,40) + 
+  xlab("Trial number") + ylab("RPE")
+
+library(gridExtra)
+gridExtra::grid.arrange(gV, gRPE, nrow = 2)
+
+gg <- arrangeGrob(gV, gRPE, nrow = 2)
+ggsave(file="./figs/illustration_sequence_alpha.eps", gg)
+```
+
+## RPE 
+
+```{r}
+g1 <- mutate(dfseq, group = factor(group)) %>%
+  ggplot(aes(x = delta.fit, y = y.delta, color = group, shape=group)) +
+  geom_point(size = 2) + 
+  geom_smooth(method = lm, se=FALSE) + theme(legend.position = "none") +
+  scale_color_manual(values = clPalette) + 
+  theme(aspect.ratio=1)
+print(g1)
+```
+
+
+```{r}
+dfstat %>% select(cor.delta.fit.y, cov.delta.fit.y, var.delta.fit, beta.delta) %>% 
+  round(digits = 3)
+```
+
+## Value
+
+```{r}
+g2 <- mutate(dfseq, group = factor(group)) %>%
+  ggplot(aes(x = V.fit, y = y.V, color = group, shape=group)) +
+  geom_point(size = 2) + 
+  geom_smooth(method = lm, se=FALSE) +
+  scale_color_manual(values = clPalette) +
+   theme(legend.position = "none") +
+  theme(aspect.ratio=1)
+print(g2)
+
+print(dfstat)
+```
+
+```{r}
+gg <- arrangeGrob(g2, g1, nrow = 1)
+ggsave(file="./figs/illustration_correlation_alpha.eps", gg)
+```
+
+```{r}
+dfstat %>% select(cor.V.fit.y, var.V.fit, beta.V) %>% 
+  round(digits = 3)
+```
+
+
+
