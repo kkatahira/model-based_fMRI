@@ -1,3 +1,5 @@
+Rmarkdown files for a paper under review
+
 - illustaration_RW_alpha.Rmd - for Fig.1 
 
 - simulation_group_comparison_RW_alpha.Rmd - for Fig.2 
