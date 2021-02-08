@@ -1,7 +1,6 @@
 Rmarkdown files for ["Revisiting
 the importance of model fitting for model-based
-fMRI: It does matter in computational psychiatry."](https://doi.
-org/10.1371/journal.pcbi.1008738)
+fMRI: It does matter in computational psychiatry."](https://doi.org/10.1371/journal.pcbi.1008738)
 
 - illustaration_RW_alpha.Rmd - for Fig 1 
 
